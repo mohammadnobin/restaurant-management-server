@@ -6,8 +6,10 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const port = process.env.PORT || 3000;
 // firebase private kay
 const admin = require("firebase-admin");
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf-8')
-const serviceAccount = JSON.parse(decoded)
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf-8"
+);
+const serviceAccount = JSON.parse(decoded);
 // firebase private kay
 const app = express();
 // middleware
@@ -24,61 +26,74 @@ const client = new MongoClient(process.env.MONGODB_URI, {
   },
 });
 
-
-
-
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+  credential: admin.credential.cert(serviceAccount),
 });
 
 // this is token verify
-const verifyFireBaseToken = async(req, res, next)=>{
+const verifyFireBaseToken = async (req, res, next) => {
   const authHeader = req.headers?.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).send({message: 'unauthorized access'})
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).send({ message: "unauthorized access" });
   }
-  const token = authHeader.split(' ')[1];
-  try{
+  const token = authHeader.split(" ")[1];
+  try {
     const decoded = await admin.auth().verifyIdToken(token);
-    req.decoded =decoded;
-    next()
+    req.decoded = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).send({ message: "unauthorized access" });
   }
-  catch(error){
-    return res.status(401).send({message: 'unauthorized access'})
-  }
-
-}
+};
 // this is token verify
 // this is token email verify
-const verifyTokenEmail = (req, res, next)=>{
+const verifyTokenEmail = (req, res, next) => {
   if (req.query.email !== req.decoded.email) {
-      return res.status(403).message({message: 'forbidden access'})
+    return res.status(403).message({ message: "forbidden access" });
   }
-  next()
-}
+  next();
+};
 // this is token email verify
 async function run() {
   try {
     const database = client.db("restaurant-store");
     const foodsCollection = database.collection("foods");
     const ordersCollection = database.collection("orders");
-// my all foods api and routs here
+    // my all foods api and routs here
     app.get("/all_foods", async (req, res) => {
-      const { searchparams } = req.query;
+      const { searchparams, sort } = req.query;
+
       let query = {};
       if (searchparams) {
         query = { food_name: { $regex: searchparams, $options: "i" } };
       }
-      const allFood = await foodsCollection.find(query).toArray();
+
+      let sortOption = {};
+      if (sort === "asc") {
+        sortOption = { price: 1 }; // ascending
+      } else if (sort === "desc") {
+        sortOption = { price: -1 }; // descending
+      }
+
+      const allFood = await foodsCollection
+        .find(query)
+        .sort(sortOption)
+        .toArray();
+
       res.send(allFood);
     });
 
-    app.get("/my_foods", verifyFireBaseToken, verifyTokenEmail, async(req, res)=>{
-      const email = req.query.email;
-      const query = {email: email}
-      const result = await foodsCollection.find(query).toArray();
-      res.send(result)
-    })
+    app.get(
+      "/my_foods",
+      verifyFireBaseToken,
+      verifyTokenEmail,
+      async (req, res) => {
+        const email = req.query.email;
+        const query = { email: email };
+        const result = await foodsCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
 
     app.get("/top_foods", async (req, res) => {
       const result = await foodsCollection
@@ -100,7 +115,7 @@ async function run() {
       const foodsData = req.body;
       const quantity = foodsData.quantity;
       foodsData.quantity = parseInt(quantity);
-      const price = foodsData.price;  
+      const price = foodsData.price;
       foodsData.price = parseInt(price);
       const query = { _id: new ObjectId(id) };
       const options = { upsert: true };
@@ -116,7 +131,7 @@ async function run() {
       res.send(result);
     });
 
-    app.delete("/delete_food/:id",verifyFireBaseToken, async (req, res) => {
+    app.delete("/delete_food/:id", verifyFireBaseToken, async (req, res) => {
       const id = req.params.id;
 
       const query = { _id: new ObjectId(id) };
@@ -136,15 +151,20 @@ async function run() {
     // my all foods api and routs here
 
     // all orders foods api and routes
-    app.get("/all_orders", verifyFireBaseToken,verifyTokenEmail, async (req, res) => {
-      const email = req.query.email;
-      const query = {};
-      if (email) {
-        query.buyer_email = email;
+    app.get(
+      "/all_orders",
+      verifyFireBaseToken,
+      verifyTokenEmail,
+      async (req, res) => {
+        const email = req.query.email;
+        const query = {};
+        if (email) {
+          query.buyer_email = email;
+        }
+        const allOrders = await ordersCollection.find(query).toArray();
+        res.send(allOrders);
       }
-      const allOrders = await ordersCollection.find(query).toArray();
-      res.send(allOrders);
-    });
+    );
 
     app.delete("/delete_order/:id", verifyFireBaseToken, async (req, res) => {
       const id = req.params.id;
@@ -154,68 +174,67 @@ async function run() {
       res.send(result);
     });
 
-app.post("/order/:foodId", verifyFireBaseToken, async (req, res) => {
-  const id = req.params.foodId;
-  const orderData = req.body;
-  const { buyer_email, order_quantity } = orderData;
+    app.post("/order/:foodId", verifyFireBaseToken, async (req, res) => {
+      const id = req.params.foodId;
+      const orderData = req.body;
+      const { buyer_email, order_quantity } = orderData;
 
-  const orderQuantity = parseInt(order_quantity, 10);
-  if (!orderQuantity || orderQuantity <= 0) {
-    return res.status(400).send({ error: "Invalid order quantity" });
-  }
-  const food = await foodsCollection.findOne({ _id: new ObjectId(id) });
-  if (!food) {
-    return res.status(404).send({ error: "Food not found" });
-  }
-  if (food.quantity < orderQuantity) {
-    return res.status(400).send({ error: "Not enough stock available" });
-  }
+      const orderQuantity = parseInt(order_quantity, 10);
+      if (!orderQuantity || orderQuantity <= 0) {
+        return res.status(400).send({ error: "Invalid order quantity" });
+      }
+      const food = await foodsCollection.findOne({ _id: new ObjectId(id) });
+      if (!food) {
+        return res.status(404).send({ error: "Food not found" });
+      }
+      if (food.quantity < orderQuantity) {
+        return res.status(400).send({ error: "Not enough stock available" });
+      }
 
-  const existingOrder = await ordersCollection.findOne({
-    product_id: id,
-    buyer_email: buyer_email,
-  });
+      const existingOrder = await ordersCollection.findOne({
+        product_id: id,
+        buyer_email: buyer_email,
+      });
 
-  let result;
+      let result;
 
-  if (existingOrder) {
-    result = await ordersCollection.updateOne(
-      { _id: existingOrder._id },
-      {
-        $inc: {
+      if (existingOrder) {
+        result = await ordersCollection.updateOne(
+          { _id: existingOrder._id },
+          {
+            $inc: {
+              order_quantity: orderQuantity,
+            },
+            $set: {
+              date: Date.now(),
+            },
+          }
+        );
+      } else {
+        const newOrder = {
+          ...orderData,
           order_quantity: orderQuantity,
-        },
-        $set: {
+          product_id: id,
           date: Date.now(),
-        },
+        };
+
+        result = await ordersCollection.insertOne(newOrder);
       }
-    );
-  } else {
-    const newOrder = {
-      ...orderData,
-      order_quantity: orderQuantity,
-      product_id: id,
-      date: Date.now(),
-    };
 
-    result = await ordersCollection.insertOne(newOrder);
-  }
-
-  if (result.acknowledged || result.modifiedCount > 0) {
-    await foodsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $inc: {
-          quantity: -orderQuantity,
-          purchase_count: orderQuantity,
-        },
+      if (result.acknowledged || result.modifiedCount > 0) {
+        await foodsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $inc: {
+              quantity: -orderQuantity,
+              purchase_count: orderQuantity,
+            },
+          }
+        );
       }
-    );
-  }
 
-  res.send(result);
-});
-
+      res.send(result);
+    });
   } finally {
   }
 }
